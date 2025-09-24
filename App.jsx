@@ -1,4 +1,4 @@
-```jsx
+
 tick={{ fill: "#aaa", fontSize: 12 }}
 />
 <Tooltip
