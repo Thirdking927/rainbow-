@@ -59,9 +59,7 @@ function quadFitLnY(x, yLn) {
   const Dc = det3(B3);
   return { a: Da / D, b: Db / D, c: Dc / D };
 }
-function polyEval2({ a, b, c }, x) {
-  return a * x * x + b * x + c;
-}
+function polyEval2({ a, b, c }, x) { return a * x * x + b * x + c; }
 
 /* ---------- data fetchers with fallbacks ---------- */
 async function fetchCoinGecko() {
@@ -133,7 +131,7 @@ export default function App() {
       residuals.reduce((a, b) => a + Math.pow(b - meanRes, 2), 0) / residuals.length
     );
 
-    // Build boundaries and stacked spans
+    // boundaries → stacked spans
     const multipliers = [-3, -2, -1, 0, 1, 2, 3, 3.5];
     const boundaries = multipliers.map((m) =>
       rows.map((_, i) => Math.exp(fitLn[i] + m * sdRes))
@@ -165,22 +163,22 @@ export default function App() {
   }, [rows]);
 
   return (
-    <div className="min-h-screen w-full bg-neutral-950 text-neutral-100 flex flex-col">
-      <header className="p-4 pb-2">
-        <h1 className="text-2xl font-bold">Bitcoin Rainbow Price Chart</h1>
-        <p className="text-sm opacity-80">Log-regression bands + halvings • Mobile ready</p>
+    <div style={{ minHeight: "100vh", width: "100%", background: "#0f0f10", color: "#eee", display: "flex", flexDirection: "column" }}>
+      <header style={{ padding: "16px 16px 8px 16px" }}>
+        <h1 style={{ margin: 0, fontSize: 22, fontWeight: 700 }}>Bitcoin Rainbow Price Chart</h1>
+        <p style={{ margin: "4px 0 0 0", fontSize: 13, opacity: 0.8 }}>Log-regression bands + halvings • Mobile ready</p>
       </header>
 
-      <main className="flex-1 p-2">
-        {loading && <div className="p-6 text-center">Loading BTC history…</div>}
+      <main style={{ flex: 1, padding: 8 }}>
+        {loading && <div style={{ padding: 24, textAlign: "center" }}>Loading BTC history…</div>}
         {error && (
-          <div className="p-4 text-red-400 text-sm">
+          <div style={{ padding: 12, color: "#fca5a5", fontSize: 13 }}>
             {error}. Try refresh — we’ll switch providers automatically.
           </div>
         )}
 
         {prepared && (
-          <div className="h-[70vh] w-full">
+          <div style={{ width: "100%", height: 420 /* fixed height so it renders everywhere */ }}>
             <ResponsiveContainer width="100%" height="100%">
               <AreaChart data={prepared.data} margin={{ top: 10, right: 10, left: 0, bottom: 0 }}>
                 <defs>
@@ -234,21 +232,24 @@ export default function App() {
               </AreaChart>
             </ResponsiveContainer>
 
-            <div className="grid grid-cols-2 gap-2 mt-3 text-xs">
+            {/* legend below chart */}
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginTop: 12, fontSize: 12 }}>
               {RAINBOW.map((r) => (
-                <div key={r.key} className="flex items-center gap-2">
-                  <span className="w-3 h-3 rounded" style={{ background: r.color }} />
-                  <span className="opacity-90">{r.label}</span>
+                <div key={r.key} style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                  <span style={{ width: 12, height: 12, borderRadius: 4, background: r.color, display: "inline-block" }} />
+                  <span style={{ opacity: 0.9 }}>{r.label}</span>
                 </div>
               ))}
             </div>
 
-            <p className="text-[11px] opacity-60 mt-3">Bands are illustrative only. Not financial advice.</p>
+            <p style={{ fontSize: 11, opacity: 0.6, marginTop: 12 }}>
+              Bands are illustrative only. Not financial advice.
+            </p>
           </div>
         )}
       </main>
 
-      <footer className="p-4 pt-0 text-xs opacity-70 text-center">
+      <footer style={{ padding: "0 16px 16px 16px", fontSize: 12, opacity: 0.7, textAlign: "center" }}>
         <div>Tip: On mobile Safari/Chrome → Share → "Add to Home Screen" for app-like usage.</div>
       </footer>
     </div>
