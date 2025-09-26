@@ -1,4 +1,4 @@
-```markdown
+
 # Bitcoin Rainbow Chart (PWA)
 
 A mobile-friendly Progressive Web App (PWA) that shows the Bitcoin Rainbow Price Chart
