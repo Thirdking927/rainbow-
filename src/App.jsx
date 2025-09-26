@@ -69,7 +69,7 @@ async function fetchCoinGecko() {
   const res = await fetch(url, { headers: { accept: "application/json" }, cache: "no-store" });
   if (!res.ok) throw new Error(`CoinGecko ${res.status}`);
   const j = await res.json();
-  return j.prices.map(([t, p]) => ({ date: new Date(t), close: Number(p) }));
+  return j.prices.map(([t, p]) => ({ t, price: Number(p) })); // t = timestamp (ms)
 }
 async function fetchCoinCap() {
   const start = 1367107200000; // 2013-04-28T00:00:00Z
@@ -79,7 +79,7 @@ async function fetchCoinCap() {
   if (!res.ok) throw new Error(`CoinCap ${res.status}`);
   const j = await res.json();
   if (!j.data) throw new Error("CoinCap bad payload");
-  return j.data.map((d) => ({ date: new Date(d.time), close: Number(d.priceUsd) }));
+  return j.data.map((d) => ({ t: Number(d.time), price: Number(d.priceUsd) }));
 }
 async function fetchBlockchain() {
   const url = "https://api.blockchain.info/charts/market-price?format=json&cors=true";
@@ -87,7 +87,7 @@ async function fetchBlockchain() {
   if (!res.ok) throw new Error(`Blockchain.info ${res.status}`);
   const j = await res.json();
   if (!j.values) throw new Error("Blockchain bad payload");
-  return j.values.map((v) => ({ date: new Date(v.x * 1000), close: Number(v.y) }));
+  return j.values.map((v) => ({ t: Number(v.x) * 1000, price: Number(v.y) }));
 }
 async function loadBTCSeries() {
   const errs = [];
@@ -98,7 +98,7 @@ async function loadBTCSeries() {
 }
 
 export default function App() {
-  const [data, setData] = useState([]);
+  const [rows, setRows] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
 
@@ -107,12 +107,11 @@ export default function App() {
       try {
         setLoading(true);
         setError("");
-        const rows = await loadBTCSeries();
-        // normalize + sort
-        const clean = rows
-          .filter((r) => isFinite(r.close) && r.close > 0 && r.date instanceof Date)
-          .sort((a, b) => a.date - b.date);
-        setData(clean);
+        const series = await loadBTCSeries();
+        const clean = series
+          .filter((r) => isFinite(r.price) && r.price > 0 && isFinite(r.t))
+          .sort((a, b) => a.t - b.t);
+        setRows(clean);
       } catch (e) {
         setError(String(e?.message || e));
       } finally {
@@ -122,10 +121,10 @@ export default function App() {
   }, []);
 
   const prepared = useMemo(() => {
-    if (!data.length) return null;
+    if (!rows.length) return null;
 
-    const x = data.map((_, i) => i);
-    const yLn = data.map((d) => Math.log(Math.max(d.close, 1e-9)));
+    const x = rows.map((_, i) => i);
+    const yLn = rows.map((d) => Math.log(Math.max(d.price, 1e-9)));
     const coeffs = quadFitLnY(x, yLn);
     const fitLn = x.map((xi) => polyEval2(coeffs, xi));
     const residuals = yLn.map((yi, i) => yi - fitLn[i]);
@@ -134,22 +133,19 @@ export default function App() {
       residuals.reduce((a, b) => a + Math.pow(b - meanRes, 2), 0) / residuals.length
     );
 
-    // boundaries b0..b7 (8 lines → 7 bands)
+    // Build boundaries and stacked spans
     const multipliers = [-3, -2, -1, 0, 1, 2, 3, 3.5];
     const boundaries = multipliers.map((m) =>
-      data.map((_, i) => Math.exp(fitLn[i] + m * sdRes))
+      rows.map((_, i) => Math.exp(fitLn[i] + m * sdRes))
     );
 
-    // prepare stacked spans (no baseValue; more stable in Recharts v2)
-    const rows = data.map((d, i) => {
+    const data = rows.map((d, i) => {
       const b = boundaries.map((arr) => arr[i]);
       const base = b[0];
       return {
-        date: d.date,
-        price: d.close,
-        // cumulative base (transparent)
+        t: d.t,
+        price: d.price,
         base,
-        // band spans (upper - lower)
         span1: b[1] - b[0],
         span2: b[2] - b[1],
         span3: b[3] - b[2],
@@ -160,23 +156,13 @@ export default function App() {
       };
     });
 
-    const minY = Math.max(
-      1,
-      Math.min(
-        ...rows.map((r) => Math.min(r.base, r.price))
-      )
+    const yMin = Math.max(1, Math.min(...data.map((r) => Math.min(r.base, r.price))));
+    const halvingTs = HALVINGS.map((iso) => Date.parse(iso)).filter(
+      (t) => t >= data[0].t && t <= data[data.length - 1].t
     );
 
-    return { rows, yMin: minY };
-  }, [data]);
-
-  const halvingXs = useMemo(() => {
-    if (!prepared) return [];
-    const series = prepared.rows;
-    return HALVINGS.map((iso) => new Date(iso)).filter(
-      (d) => d >= series[0].date && d <= series[series.length - 1].date
-    );
-  }, [prepared]);
+    return { data, yMin, halvingTs };
+  }, [rows]);
 
   return (
     <div className="min-h-screen w-full bg-neutral-950 text-neutral-100 flex flex-col">
@@ -189,14 +175,14 @@ export default function App() {
         {loading && <div className="p-6 text-center">Loading BTC history…</div>}
         {error && (
           <div className="p-4 text-red-400 text-sm">
-            {error}. Try refresh — or it will retry on next visit.
+            {error}. Try refresh — we’ll switch providers automatically.
           </div>
         )}
 
         {prepared && (
           <div className="h-[70vh] w-full">
             <ResponsiveContainer width="100%" height="100%">
-              <AreaChart data={prepared.rows} margin={{ top: 10, right: 10, left: 0, bottom: 0 }}>
+              <AreaChart data={prepared.data} margin={{ top: 10, right: 10, left: 0, bottom: 0 }}>
                 <defs>
                   {RAINBOW.map((r, idx) => (
                     <linearGradient id={`g${idx}`} x1="0" y1="0" x2="0" y2="1" key={r.key}>
@@ -208,42 +194,40 @@ export default function App() {
 
                 <CartesianGrid stroke="#222" vertical={false} />
                 <XAxis
-                  dataKey="date"
-                  tickFormatter={(d) => new Date(d).getFullYear()}
+                  dataKey="t"
+                  type="number"
+                  scale="time"
+                  tickFormatter={(ms) => new Date(ms).getFullYear()}
                   tick={{ fill: "#aaa", fontSize: 12 }}
                 />
                 <YAxis
                   scale="log"
                   domain={[prepared.yMin, "auto"]}
-                  tickFormatter={(v) =>
-                    `$${Intl.NumberFormat("en", { notation: "compact" }).format(v)}`
-                  }
+                  tickFormatter={(v) => `$${Intl.NumberFormat("en", { notation: "compact" }).format(v)}`}
                   tick={{ fill: "#aaa", fontSize: 12 }}
                 />
                 <Tooltip
                   contentStyle={{ background: "#0f0f10", border: "1px solid #2a2a2a" }}
-                  labelFormatter={(d) => new Date(d).toDateString()}
+                  labelFormatter={(ms) => new Date(ms).toDateString()}
                   formatter={(v, name) => [`$${Number(v).toLocaleString()}`, name]}
                 />
 
-                {/* Transparent base to offset stack from zero */}
-                <Area type="monotone" dataKey="base" stackId="bands" stroke="none" fill="transparent" />
+                {/* stacked rainbow */}
+                <Area type="monotone" dataKey="base"  stackId="bands" stroke="none" fill="transparent" isAnimationActive={false} />
+                <Area type="monotone" dataKey="span1" stackId="bands" stroke="none" fill="url(#g0)" isAnimationActive={false} />
+                <Area type="monotone" dataKey="span2" stackId="bands" stroke="none" fill="url(#g1)" isAnimationActive={false} />
+                <Area type="monotone" dataKey="span3" stackId="bands" stroke="none" fill="url(#g2)" isAnimationActive={false} />
+                <Area type="monotone" dataKey="span4" stackId="bands" stroke="none" fill="url(#g3)" isAnimationActive={false} />
+                <Area type="monotone" dataKey="span5" stackId="bands" stroke="none" fill="url(#g4)" isAnimationActive={false} />
+                <Area type="monotone" dataKey="span6" stackId="bands" stroke="none" fill="url(#g5)" isAnimationActive={false} />
+                <Area type="monotone" dataKey="span7" stackId="bands" stroke="none" fill="url(#g6)" isAnimationActive={false} />
 
-                {/* 7 stacked spans as rainbow bands */}
-                <Area type="monotone" dataKey="span1" stackId="bands" stroke="none" fill="url(#g0)" />
-                <Area type="monotone" dataKey="span2" stackId="bands" stroke="none" fill="url(#g1)" />
-                <Area type="monotone" dataKey="span3" stackId="bands" stroke="none" fill="url(#g2)" />
-                <Area type="monotone" dataKey="span4" stackId="bands" stroke="none" fill="url(#g3)" />
-                <Area type="monotone" dataKey="span5" stackId="bands" stroke="none" fill="url(#g4)" />
-                <Area type="monotone" dataKey="span6" stackId="bands" stroke="none" fill="url(#g5)" />
-                <Area type="monotone" dataKey="span7" stackId="bands" stroke="none" fill="url(#g6)" />
+                {/* price line */}
+                <Line type="monotone" dataKey="price" stroke="#ffffff" dot={false} strokeWidth={1.6} isAnimationActive={false} />
 
-                {/* Price line on top */}
-                <Line type="monotone" dataKey="price" stroke="#ffffff" dot={false} strokeWidth={1.6} />
-
-                {/* Halving markers */}
-                {halvingXs.map((d) => (
-                  <ReferenceLine key={d.toISOString()} x={d} stroke="#888" strokeDasharray="4 4" />
+                {/* halvings */}
+                {prepared.halvingTs.map((t) => (
+                  <ReferenceLine key={t} x={t} stroke="#888" strokeDasharray="4 4" />
                 ))}
 
                 <Legend verticalAlign="bottom" height={36} wrapperStyle={{ color: "#ddd" }} />
@@ -259,9 +243,7 @@ export default function App() {
               ))}
             </div>
 
-            <p className="text-[11px] opacity-60 mt-3">
-              Bands are illustrative only. Not financial advice.
-            </p>
+            <p className="text-[11px] opacity-60 mt-3">Bands are illustrative only. Not financial advice.</p>
           </div>
         )}
       </main>
@@ -272,4 +254,3 @@ export default function App() {
     </div>
   );
 }
-
